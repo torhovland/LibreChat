@@ -62,12 +62,27 @@ jobs:
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           echo "TAG=${TAG}" >> "$GITHUB_ENV"
           gcloud config set billing/quota_project "${PROJECT_ID}"
-          gcloud builds submit \
+          # Archive explicitly: gcloud's .gitignore matcher drops
+          # packages/api/tsconfig.json because of the legacy `api/tsconfig.json`
+          # rule, which breaks the build patch and the API package build.
+          ARCHIVE="/tmp/librechat-source-${TAG}.tgz"
+          tar -czf "${ARCHIVE}" \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./data-node' \
+            --exclude='./uploads' \
+            --exclude='./images' \
+            --exclude='./logs' \
+            --exclude='./meili_data*' \
+            --exclude='./prep-stream-dev-restack' \
+            .
+          SOURCE="gs://${PROJECT_ID}_cloudbuild/source/gha-${TAG}.tgz"
+          gsutil cp "${ARCHIVE}" "${SOURCE}"
+          gcloud builds submit "${SOURCE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            --gcs-source-staging-dir="gs://${PROJECT_ID}_cloudbuild/source" \
             --config=deploy/cloudrun/cloudbuild.yaml \
-            --substitutions=_TAG="${TAG}" .
+            --substitutions=_TAG="${TAG}"
 
       - name: Capture current revision
         id: previous
