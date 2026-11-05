@@ -45,20 +45,27 @@ jobs:
         with:
           workload_identity_provider: projects/386358422486/locations/global/workloadIdentityPools/github/providers/github
           service_account: github-deploy@librechat-513719.iam.gserviceaccount.com
+          # Required for gcloud builds submit over WIF: the credential's quota
+          # project drives the Service Usage check during source staging.
+          project_id: librechat-513719
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Build image with Cloud Build
+        env:
+          CLOUDSDK_BILLING_QUOTA_PROJECT: librechat-513719
         run: |
           set -euo pipefail
           TAG="$(git rev-parse --short=12 HEAD)"
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/api:${TAG}"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
           echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          gcloud config set billing/quota_project "${PROJECT_ID}"
           gcloud builds submit \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
+            --gcs-source-staging-dir="gs://${PROJECT_ID}_cloudbuild/source" \
             --config=deploy/cloudrun/cloudbuild.yaml \
             --substitutions=_TAG="${TAG}" .
 
