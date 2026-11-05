@@ -39,24 +39,48 @@ index in a few seconds.
 
 ## Automated deployment
 
-Two GitHub Actions workflows own the deployment:
+Deployment is release-based, not commit-based:
 
-- `.github/workflows/deploy-cloudrun.yml` builds the current commit with Cloud
-  Build and deploys it on every push to `main`, on manual dispatch, or when
-  called by the sync workflow.
-- `.github/workflows/sync-upstream.yml` runs daily at 04:00 UTC, merges
-  `LibreChat-AI/LibreChat:main` into this fork's `main`, and then calls the
-  deploy workflow if anything changed.
+- `.github/workflows/deploy-release.yml` runs daily at 04:00 UTC. It finds the
+  latest non-draft LibreChat app release (`v*`, including pre-releases), fetches
+  that exact tag, copies the deployment files from `main`, and pushes a
+  `release/<tag>` branch. If the tag differs from
+  `.github/deployed-release`, it calls the deploy workflow.
+- `.github/workflows/deploy-cloudrun.yml` is only callable by the release
+  workflow. It builds the `release/<tag>` commit with Cloud Build and deploys
+  it. A failed `/health` smoke test rolls traffic back to the previous
+  revision.
+- `.github/deployed-release` is the deployed-release state file. It currently
+  records `v0.8.9-rc1`, so enabling release deployments does not roll the app
+  back to that older tag. The first automatic deploy happens when a newer
+  release is published.
+
+Manual release deploy:
+
+```sh
+# Deploy a specific release
+gh workflow run deploy-release.yml -R torhovland/LibreChat \
+  -f tag=<release-tag> -f force=true
+
+# Prepare the release branch without building or deploying
+gh workflow run deploy-release.yml -R torhovland/LibreChat \
+  -f tag=<release-tag> -f force=true -f dry_run=true
+```
+
+Only force an older tag if you intentionally want to roll back; `v0.8.9-rc1`
+is 88 commits behind the current deployment.
+
+Upstream releases are currently all marked pre-release; the workflow includes
+them. Chart releases (`chart-*`) are ignored. The release tag is built exactly
+as published, with this fork's `deploy/` files overlaid.
 
 Authentication uses GitHub OIDC + Workload Identity Federation, so there are no
 long-lived GCP keys in GitHub. The deploy service account is
 `github-deploy@librechat-513719.iam.gserviceaccount.com`.
 
-Database migrations are **not** automatic. If an upstream release requires one
-(for example the tenant-index migration), run it manually per `UPGRADING.md`
-before or after the deploy. The deploy workflow only replaces the Cloud Run
-revision; a failed `/health` smoke test rolls traffic back to the previous
-revision.
+Database migrations are **not** automatic. If a release requires one, run it
+manually per `UPGRADING.md`. The workflow only replaces the Cloud Run revision;
+a successful startup with a needed migration still requires intervention.
 
 ## Build
 

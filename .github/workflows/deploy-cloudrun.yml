@@ -1,15 +1,11 @@
-name: Deploy latest LibreChat to Cloud Run
+name: Deploy LibreChat release to Cloud Run
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
   workflow_call:
     inputs:
       ref:
-        description: Git ref to deploy; defaults to the triggering commit
-        required: false
-        default: ''
+        description: Release branch commit to deploy
+        required: true
         type: string
 
 permissions:
@@ -35,10 +31,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
+      - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
