@@ -61,14 +61,13 @@ revision.
 ## Build
 
 ```sh
-gcloud builds submit \
-  --project=librechat-513719 \
-  --region=europe-north1 \
-  --config=deploy/cloudrun/cloudbuild.yaml \
-  --substitutions=_TAG=$(date +%Y%m%d-%H%M) .
+./deploy/cloudrun/build.sh
 ```
 
-`cloudbuild.yaml` runs `deploy/cloudrun/patch-build.py` first. The patch is kept
+The script archives the source and submits the archive explicitly. A plain
+`gcloud builds submit .` drops `packages/api/tsconfig.json` because gcloud's
+`.gitignore` matcher treats the legacy `api/tsconfig.json` rule as a suffix
+match. `cloudbuild.yaml` runs `deploy/cloudrun/patch-build.py` first. The patch is kept
 out of the tracked upstream files so daily upstream merges stay clean. If you
 build with plain `docker build` instead of Cloud Build, run the patch first:
 
