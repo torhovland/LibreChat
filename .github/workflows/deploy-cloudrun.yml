@@ -1,0 +1,108 @@
+name: Deploy latest LibreChat to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to deploy; defaults to the triggering commit
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: librechat-cloudrun-deploy
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: librechat-513719
+  PROJECT_NUMBER: '386358422486'
+  REGION: europe-north1
+  ARTIFACT_REPO: librechat
+  SERVICE: librechat
+  RUNTIME_SA: librechat-run@librechat-513719.iam.gserviceaccount.com
+  DEPLOY_SA: github-deploy@librechat-513719.iam.gserviceaccount.com
+  BUCKET: librechat-513719-files
+  SERVICE_ACCOUNT: librechat-run@librechat-513719.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/386358422486/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-deploy@librechat-513719.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build image with Cloud Build
+        run: |
+          set -euo pipefail
+          TAG="$(git rev-parse --short=12 HEAD)"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/api:${TAG}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          gcloud builds submit \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --config=deploy/cloudrun/cloudbuild.yaml \
+            --substitutions=_TAG="${TAG}" .
+
+      - name: Capture current revision
+        id: previous
+        run: |
+          set -euo pipefail
+          PREV="$(gcloud run services describe "${SERVICE}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format='value(status.latestReadyRevisionName)')"
+          echo "revision=${PREV}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy revision
+        run: |
+          set -euo pipefail
+          envsubst < deploy/cloudrun/service.yaml.tmpl > /tmp/librechat-service.yaml
+          gcloud run services replace /tmp/librechat-service.yaml \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}"
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "${SERVICE}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format='value(status.url)')"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "${URL}/health" >/dev/null; then
+              echo "Cloud Run is healthy at ${URL}"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check failed for ${URL}" >&2
+          exit 1
+
+      - name: Roll back on failed smoke test
+        if: failure() && steps.smoke.outcome == 'failure' && steps.previous.outputs.revision != ''
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "${SERVICE}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --to-revisions="${{ steps.previous.outputs.revision }}=100"

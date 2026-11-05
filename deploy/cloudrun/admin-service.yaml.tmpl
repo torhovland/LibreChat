@@ -1,0 +1,51 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: librechat-admin
+  labels:
+    cloud.googleapis.com/location: ${REGION}
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: '0'
+        autoscaling.knative.dev/maxScale: '1'
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      serviceAccountName: ${SERVICE_ACCOUNT}
+      containers:
+        - name: admin
+          image: ${ADMIN_IMAGE}
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          env:
+            - name: NODE_ENV
+              value: 'production'
+            - name: API_SERVER_URL
+              value: 'https://${DOMAIN}'
+            - name: VITE_API_BASE_URL
+              value: 'https://${DOMAIN}'
+            - name: SESSION_COOKIE_SECURE
+              value: 'true'
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: librechat-admin-session-secret
+                  key: latest
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 30
