@@ -1,0 +1,47 @@
+substitutions:
+  _REGION: europe-north1
+  _REPO: librechat
+  _IMAGE_NAME: api
+  _TAG: latest
+
+steps:
+  # Keep the fork's tracked files a clean mirror of upstream. The two build
+  # patches are applied only inside the Cloud Build workspace.
+  - id: patch-build
+    name: python:3-alpine
+    entrypoint: python3
+    args: ['deploy/cloudrun/patch-build.py']
+
+  - id: build-api-base
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=Dockerfile.multi
+      - --target=api-build
+      - --tag=librechat-api-base:cloudrun
+      - .
+
+  - id: build-cloudrun-runtime
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=deploy/cloudrun/Dockerfile
+      - --build-arg=BASE_IMAGE=librechat-api-base:cloudrun
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE_NAME}:${_TAG}
+      - .
+
+  - id: push-cloudrun-runtime
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE_NAME}:${_TAG}
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE_NAME}:${_TAG}
+
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: '100'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 3600s

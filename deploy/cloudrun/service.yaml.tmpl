@@ -1,0 +1,99 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: librechat
+  labels:
+    cloud.googleapis.com/location: ${REGION}
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: '0'
+        autoscaling.knative.dev/maxScale: '1'
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/startup-cpu-boost: 'true'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 3600
+      serviceAccountName: ${SERVICE_ACCOUNT}
+      containers:
+        - name: api
+          image: ${IMAGE}
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          env:
+            - name: WAIT_FOR_MEILI
+              value: 'true'
+            - name: FORCE_MEILI_RESYNC
+              value: 'true'
+            - name: NODE_OPTIONS
+              value: '--max-old-space-size=768'
+          volumeMounts:
+            - name: env-secret
+              mountPath: /secrets/env
+            - name: yaml-secret
+              mountPath: /secrets/yaml
+            - name: uploads
+              mountPath: /app/uploads
+            - name: images
+              mountPath: /app/client/public/images
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 60
+
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.35.1
+          resources:
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: librechat-meili-master-key
+                  key: latest
+            - name: MEILI_NO_ANALYTICS
+              value: 'true'
+            - name: MEILI_ENV
+              value: 'production'
+            - name: MEILI_DB_PATH
+              value: '/meili_data'
+
+      volumes:
+        - name: env-secret
+          secret:
+            secretName: librechat-env
+            items:
+              - key: latest
+                path: .env
+        - name: yaml-secret
+          secret:
+            secretName: librechat-yaml
+            items:
+              - key: latest
+                path: librechat.yaml
+        - name: uploads
+          csi:
+            driver: gcsfuse.run.googleapis.com
+            volumeAttributes:
+              bucketName: ${BUCKET}
+              mountOptions: only-dir=uploads
+        - name: images
+          csi:
+            driver: gcsfuse.run.googleapis.com
+            volumeAttributes:
+              bucketName: ${BUCKET}
+              mountOptions: only-dir=images
